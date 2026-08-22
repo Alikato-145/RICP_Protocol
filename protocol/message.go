@@ -7,7 +7,7 @@ import (
 func EncodeMove(seq uint32, mask uint8, x, y uint16) []byte {
 	buf := make([]byte, 10)
 	binary.BigEndian.PutUint32(buf[0:4], seq)
-	buf[4] = TypeMove // เห็น TypeMove ได้เพราะอยู่ package protocol เดียวกัน
+	buf[4] = TypeMove 
 	binary.BigEndian.PutUint16(buf[5:7], x)
 	binary.BigEndian.PutUint16(buf[7:9], y)
 	buf[9] = mask
