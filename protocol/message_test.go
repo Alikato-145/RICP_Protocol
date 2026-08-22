@@ -74,13 +74,13 @@ func TestWelcomeRoundtrip(t *testing.T) {
 }
 
 func TestAckRoundtrip(t *testing.T) {
-	pkt := EncodeAck(1003, 123)
+	pkt := EncodeAck(1003, 5000000)
 	if len(pkt) != 9 {
-		t.Fatalf("ACK should be 5 bytes, got %d", len(pkt))
+		t.Fatalf("ACK should be 9 bytes, got %d", len(pkt))
 	}
 
 	seq, seq_ack := DecodeAck(pkt)
-	if seq != 1003 || seq_ack != 123 || pkt[4] != TypeAck {
+	if seq != 1003 || seq_ack != 5000000 || pkt[4] != TypeAck {
 		t.Fatalf("decode mismatch: seq=%d seq_ack=%d type=%d", seq, seq_ack, pkt[4])
 	}
 }

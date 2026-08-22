@@ -1,18 +1,79 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
-
+	"log"
+	"net"
 	"ricp/protocol" // module "ricp" (จาก go.mod) + โฟลเดอร์ "protocol"
 )
 
 func main() {
-	pkt := protocol.EncodeMove(1000, protocol.TypeMove, 300, 250)
-	fmt.Printf("MOVE datagram: % X\n", pkt)
+	addr, err := net.ResolveUDPAddr("udp", ":9200")
+	if err != nil {
+		log.Fatal(err)
+	}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Println("Viewr listening UDP at port : 9200")
 
-	seq, x, y, mask := protocol.DecodeMove(pkt)
-	fmt.Printf("decode: seq=%d x=%d y=%d mask=%08b\n", seq, x, y, mask)
+	buf := make([]byte, 1024)
+	var lastSeq uint32
+	first := true
+	for {
+		n, _, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			fmt.Printf("read error: %s\n", err)
+			continue
+		}
+		if n < 5 {
+			continue
+		}
+		seq := binary.BigEndian.Uint32(buf[:4])
+		if !first && seq > lastSeq+1 {
+			fmt.Printf("gap detected: lastSeq=%d, seq=%d", lastSeq, seq)
+		}
+		if !first && seq <= lastSeq {
+			fmt.Printf("reorder/dup: seq=%d\n", seq)
+			continue
+		}
+		lastSeq = seq
+		first = false
+		type_message := buf[4]
+		switch type_message {
+		case protocol.TypeMove:
+			_, mask, x, y := protocol.DecodeMove(buf)
+			fmt.Printf("move: mask=%d, x=%d, y=%d\n", mask, x, y)
+		case protocol.TypeClick:
+			_, mask, down_flag, reserved := protocol.DecodeClick(buf)
+			fmt.Printf("click: mask=%d, down=%d, reserved=%d\n", mask, down_flag, reserved)
+		case protocol.TypeKey:
+			_, key, down_flag, reserved := protocol.DecodeKey(buf)
+			fmt.Printf("key: key=%d, down=%d, reserved=%d\n", key, down_flag, reserved)
+		case protocol.TypeScroll:
+			_, mask, x, y := protocol.DecodeScroll(buf)
+			fmt.Printf("scroll: mask=%d, x=%d, y=%d\n", mask, x, y)
+		case protocol.TypeHello:
+			_, token := protocol.DecodeHello(buf)
+			fmt.Printf("hello: token=%s\n", token)
+		case protocol.TypeWelcome:
+			_, start := protocol.DecodeWelcome(buf)
+			fmt.Printf("welcome: start=%d\n", start)
+		case protocol.TypeAck:
+			_, ack_seq := protocol.DecodeAck(buf)
+			fmt.Printf("ack: seq=%d\n", ack_seq)
+		case protocol.TypeStats:
+			_, received, lost, reordered := protocol.DecodeStats(buf)
+			fmt.Printf("stats: received=%d, lost=%d, reordered=%d\n", received, lost, reordered)
+		case protocol.TypeBye:
+			s := protocol.DecodeBye(buf)
+			fmt.Printf("bye: %d\n", s)
+		default:
+			fmt.Printf("unknown type: %d\n", type_message)
+		}
 
-	// เข้าถึง constant ก็ได้
-	fmt.Printf("TypeKey = 0x%02X\n", protocol.TypeKey)
+	}
 }
