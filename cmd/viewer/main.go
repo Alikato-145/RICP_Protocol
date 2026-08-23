@@ -43,6 +43,7 @@ func main() {
 		lastSeq = seq
 		first = false
 		type_message := buf[4]
+		fmt.Printf("seq: %d", seq)
 		switch type_message {
 		case protocol.TypeMove:
 			_, mask, x, y := protocol.DecodeMove(buf)
