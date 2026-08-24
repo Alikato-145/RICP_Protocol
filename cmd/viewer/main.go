@@ -76,6 +76,9 @@ func main() {
 		case protocol.TypeBye:
 			s := protocol.DecodeBye(buf)
 			fmt.Printf("bye: %d\n", s)
+		case protocol.TypeStatus:
+			seq, code := protocol.DecodeStatus(buf)
+			fmt.Printf("status: seq=%d, code=%d\n", seq, code)
 		default:
 			fmt.Printf("unknown type: %d\n", type_message)
 		}

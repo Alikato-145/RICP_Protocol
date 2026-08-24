@@ -142,6 +142,7 @@ byte แรก (type) ก็รู้ทันทีว่า datagram นี้
 | 0x11 | WELCOME | V→C | 9 B | start-seq (U32) |
 | 0x12 | ACK | V→C | 9 B | ack-seq (U32) — ยืนยันรับ CLICK/KEY |
 | 0x13 | STATS | V→C | 17 B | received (U32), lost (U32), reordered (U32) |
+| 0x20 | STATUS | V→C | 8 B + phrase | code (U16), phraseLen (U8), phrase (ข้อความ) |
 | 0x1F | BYE | C→V | 5 B | ปิด session |
 
 **MOVE (0x01) — 10 ไบต์** — event ที่ถี่ที่สุด:
@@ -159,6 +160,54 @@ bit2=ขวา (0=ปล่อย 1=กด) ทำให้ MOVE พก "ตำ�
 `keysym`: ใช้ค่า keysym ของ X11 (RFC 6143) — ตัวอักษรทั่วไป = ASCII (`A`=0x41),
 ปุ่มพิเศษ: Enter=0xFF0D, Esc=0xFF1B, Backspace=0xFF08, ลูกศรซ้าย=0xFF51, F1=0xFFBE,
 Shift ซ้าย=0xFFE1, Ctrl ซ้าย=0xFFE3
+
+**STATUS (0x20) — ความยาวแปรผัน** — ข้อความควบคุมที่พก status code + คำอธิบาย:
+```
+[ seq(4) ][ type=0x20 ][ code(2) ][ phraseLen(1) ][ phrase(ยาวตาม phraseLen) ]
+```
+`code` เป็น U16 (2 ไบต์) เพราะรหัสวิ่ง 100–599 (เกิน 255 แต่ไม่ถึงพันล้าน)
+`phraseLen` บอกความยาวของ phrase เพื่อให้ผู้รับรู้ว่าต้องอ่านกี่ไบต์ (แบบเดียวกับ HELLO)
+ตัว phrase ส่งมาเพื่อให้ log อ่านออกโดยไม่ต้องมีตาราง code ทั้งสองฝั่ง
+
+### 5.3 รหัสสถานะ (Status Codes)
+
+STATUS ใช้รหัสตัวเลข 3 หลักแบ่งกลุ่มตามหลักเดียวกับ HTTP เพื่อให้ผู้รับตัดสินใจได้
+จากหลักแรกแม้ไม่รู้จักรหัสนั้น รหัสถูกส่งผ่านข้อความ STATUS (0x20) ที่ Viewer ตอบกลับ
+
+**1xx — Informational**
+
+| code | phrase | ส่งเมื่อ |
+|---|---|---|
+| 100 | STREAMING | Viewer เริ่มรับ event stream แล้ว |
+
+**2xx — Success**
+
+| code | phrase | ส่งเมื่อ |
+|---|---|---|
+| 200 | WELCOME | handshake สำเร็จ (ใช้คู่กับ/แทน WELCOME message) |
+| 202 | ACK | ยืนยันรับ CLICK/KEY ที่ต้องเชื่อถือได้ |
+| 210 | BYE OK | ปิด session ตามคำสั่ง |
+
+**4xx — Client error (Controller ผิด)**
+
+| code | phrase | ส่งเมื่อ |
+|---|---|---|
+| 400 | BAD DATAGRAM | ขนาด/รูปแบบ datagram ผิด (สั้นกว่า header, type ไม่รู้จัก) |
+| 401 | UNAUTHORIZED | ส่ง event มาก่อน handshake / token ผิด |
+| 408 | HANDSHAKE TIMEOUT | HELLO มาช้าเกินกำหนด |
+| 413 | DATAGRAM TOO LARGE | เกิน 512 ไบต์ |
+| 426 | VERSION NOT SUPPORTED | เวอร์ชันไม่ตรง (RICP/1.0) |
+
+**5xx — Server/Viewer error**
+
+| code | phrase | ส่งเมื่อ |
+|---|---|---|
+| 500 | INTERNAL ERROR | ข้อผิดพลาดภายในฝั่ง Viewer |
+| 503 | VIEWER BUSY | Viewer รับไม่ไหว/เต็ม |
+
+> หมายเหตุ: packet loss และ reordering **ไม่ใช่** สถานะผิดพลาด (ไม่ใช่ 4xx/5xx)
+> แต่เป็นเรื่องปกติของ UDP ที่คาดไว้แล้ว จึงรายงานเป็น *ตัวเลขสถิติ* ผ่าน STATS (0x13)
+> ไม่ใช่ผ่าน STATUS
 
 ---
 

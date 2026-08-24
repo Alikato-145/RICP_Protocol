@@ -108,3 +108,10 @@ func TestByeRoundtrip(t *testing.T) {
 		t.Fatalf("decode mismatch: seq=%d type=%d", seq, pkt[4])
 	}
 }
+func TestStatusRoundtrip(t *testing.T) {
+	pkt := EncodeStatus(1, 400)
+	seq, code, phrase := DecodeStatus(pkt)
+	if seq != 1 || code != 400 || phrase != "BAD DATAGRAM" || pkt[4] != TypeStatus {
+		t.Fatalf("mismatch: seq=%d code=%d phrase=%q", seq, code, phrase)
+	}
+}
