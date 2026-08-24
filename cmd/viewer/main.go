@@ -25,12 +25,13 @@ func main() {
 	var lastSeq uint32
 	first := true
 	for {
-		n, _, err := conn.ReadFromUDP(buf)
+		n, src, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			fmt.Printf("read error: %s\n", err)
 			continue
 		}
 		if n < 5 {
+			conn.WriteToUDP(protocol.EncodeStatus(0, 400), src)
 			continue
 		}
 		seq := binary.BigEndian.Uint32(buf[:4])
@@ -71,16 +72,17 @@ func main() {
 			_, ack_seq := protocol.DecodeAck(buf)
 			fmt.Printf("ack: seq=%d\n", ack_seq)
 		case protocol.TypeStats:
-			_, received, lost, reordered := protocol.DecodeStats(buf)
-			fmt.Printf("stats: received=%d, lost=%d, reordered=%d\n", received, lost, reordered)
+			_, r, l, ro := protocol.DecodeStats(buf)
+			fmt.Printf("stats: received=%d, lost=%d, reordered=%d\n", r, l, ro)
 		case protocol.TypeBye:
 			s := protocol.DecodeBye(buf)
 			fmt.Printf("bye: %d\n", s)
 		case protocol.TypeStatus:
-			seq, code := protocol.DecodeStatus(buf)
-			fmt.Printf("status: seq=%d, code=%d\n", seq, code)
+			_, code, phrase := protocol.DecodeStatus(buf)
+			fmt.Printf("status: code=%d, phrase=%s\n", code, phrase)
 		default:
 			fmt.Printf("unknown type: %d\n", type_message)
+			conn.WriteToUDP(protocol.EncodeStatus(seq, 400), src)
 		}
 		received++
 		fmt.Printf("total: received=%d, lost=%d, reordered=%d\n", received, lost, reordered)
