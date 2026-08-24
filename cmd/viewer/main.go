@@ -9,6 +9,7 @@ import (
 )
 
 func main() {
+	var received, lost, reordered uint32
 	addr, err := net.ResolveUDPAddr("udp", ":9200")
 	if err != nil {
 		log.Fatal(err)
@@ -34,16 +35,19 @@ func main() {
 		}
 		seq := binary.BigEndian.Uint32(buf[:4])
 		if !first && seq > lastSeq+1 {
-			fmt.Printf("gap detected: lastSeq=%d, seq=%d", lastSeq, seq)
+			fmt.Printf("gap detected: lastSeq=%d, seq=%d\n", lastSeq, seq)
+			lost += seq - lastSeq - 1
+
 		}
 		if !first && seq <= lastSeq {
 			fmt.Printf("reorder/dup: seq=%d\n", seq)
+			reordered++
 			continue
 		}
 		lastSeq = seq
 		first = false
 		type_message := buf[4]
-		fmt.Printf("seq: %d", seq)
+		fmt.Printf("seq: %d ", seq)
 		switch type_message {
 		case protocol.TypeMove:
 			_, mask, x, y := protocol.DecodeMove(buf)
@@ -75,6 +79,8 @@ func main() {
 		default:
 			fmt.Printf("unknown type: %d\n", type_message)
 		}
-
+		received++
+		fmt.Printf("total: received=%d, lost=%d, reordered=%d\n", received, lost, reordered)
 	}
+
 }
