@@ -15,8 +15,20 @@ func main() {
 		log.Fatal(err)
 	}
 	defer conn.Close()
-	log.Println("Controller has started and connected to the port 9200")
-	var seq uint32 = 1200
+
+	//handshake
+	conn.Write(protocol.EncodeHello(100, "token123"))
+	log.Println("[Controller] -> HELLO token123")
+	buf := make([]byte, 1024)
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, err := conn.Read(buf)
+	if err != nil || n < 5 || buf[4] != protocol.TypeWelcome {
+		log.Fatal("handshake error: not received WELCOME")
+	}
+	_, startSeq := protocol.DecodeWelcome(buf)
+	log.Printf("[Controller] <- WELCOME startSeq=%d\n", startSeq)
+
+	var seq uint32 = startSeq
 	go func() {
 		buf := make([]byte, 1024)
 		for {
