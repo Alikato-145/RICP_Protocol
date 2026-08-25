@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"ricp/protocol"
 	"time"
@@ -25,7 +26,7 @@ type pending struct {
 
 func (p *pending) add(e event) {
 	if e.kind == protocol.TypeMove {
-		p.lastMove = &e 
+		p.lastMove = &e
 	} else {
 		p.reliableQ = append(p.reliableQ, e) // add to queue
 	}
@@ -52,7 +53,13 @@ func (p *pending) flush(conn net.Conn, seq *uint32) {
 	// send MOVE received from lastMove
 	if p.lastMove != nil {
 		m := p.lastMove
-		conn.Write(protocol.EncodeMove(*seq, m.mask, m.x, m.y))
+		//conn.Write(protocol.EncodeMove(*seq, m.mask, m.x, m.y))
+		// test drop
+		if rand.Intn(100) < 20 {
+			log.Printf("[DROP] seq=%d", *seq)
+		} else {
+			conn.Write(protocol.EncodeMove(*seq, m.mask, m.x, m.y))
+		}
 		*seq++
 	}
 

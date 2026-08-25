@@ -5,16 +5,20 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"ricp/protocol" // module "ricp" (จาก go.mod) + โฟลเดอร์ "protocol"
+	"ricp/protocol"
+	"sync"
+	"time"
 )
 
 type viewerState struct {
+	mu            sync.Mutex
 	authenticated bool
 	lastSeq       uint32
 	received      uint32
 	lost          uint32
 	reordered     uint32
 	first         bool
+	clientAddr    *net.UDPAddr
 }
 
 func setupUDP() (*net.UDPConn, error) {
@@ -32,16 +36,22 @@ func setupUDP() (*net.UDPConn, error) {
 func (st *viewerState) trackSeq(seq uint32) (isDrop bool) {
 	if !st.first && seq > st.lastSeq+1 {
 		missing := seq - st.lastSeq - 1
+		st.mu.Lock()
 		st.lost += missing
 		fmt.Printf("  !! GAP      lost %d packet (expected %d, got %d)\n", missing, st.lastSeq+1, seq)
+		st.mu.Unlock()
 	}
 	if !st.first && seq <= st.lastSeq {
+		st.mu.Lock()
 		st.reordered++
 		fmt.Printf("  !! REORDER  dropped late/dup seq=%d\n", seq)
+		st.mu.Unlock()
 		return true
 	}
+	st.mu.Lock()
 	st.lastSeq = seq
 	st.first = false
+	st.mu.Unlock()
 	return false
 }
 
@@ -69,8 +79,10 @@ func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, src *net.UDPAddr,
 		_, token := protocol.DecodeHello(buf)
 		if token == "token123" {
 			startSeq := uint32(1500)
+			st.mu.Lock()
 			st.authenticated = true
 			st.lastSeq = startSeq - 1
+			st.mu.Unlock()
 			conn.WriteToUDP(protocol.EncodeWelcome(0, startSeq), src)
 			fmt.Printf("[seq %-5d] HELLO    token=%q -> WELCOME start-seq=%d\n", seq, token, startSeq)
 		} else {
@@ -88,8 +100,24 @@ func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, src *net.UDPAddr,
 		conn.WriteToUDP(protocol.EncodeStatus(0, 400), src)
 		return
 	}
+	st.mu.Lock()
 	st.received++
+	st.mu.Unlock()
 	fmt.Printf("            stats: recv=%d lost=%d reorder=%d\n", st.received, st.lost, st.reordered)
+}
+func (st *viewerState) reportStats(conn *net.UDPConn) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		st.mu.Lock()
+		r, l, ro := st.received, st.lost, st.reordered
+		addr := st.clientAddr
+		st.mu.Unlock()
+		if addr != nil {
+			conn.WriteToUDP(protocol.EncodeStats(0, r, l, ro), addr)
+			fmt.Printf(">> STATS sent: recv=%d lost=%d reorder=%d\n", r, l, ro)
+		}
+	}
 }
 
 func main() {
@@ -101,8 +129,16 @@ func main() {
 	defer conn.Close()
 	fmt.Println("=== RICP Viewer listening on UDP :9200 ===")
 	buf := make([]byte, 1024)
+	go st.reportStats(conn)
 	for {
 		n, src, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			fmt.Printf("read error: %s\n", err)
+			continue
+		}
+		st.mu.Lock()
+		st.clientAddr = src
+		st.mu.Unlock()
 		if err != nil {
 			fmt.Printf("read error: %s\n", err)
 			continue
