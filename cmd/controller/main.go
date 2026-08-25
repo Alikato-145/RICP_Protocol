@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"ricp/protocol"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,13 @@ type pending struct {
 	reliableQ []event // CLICK/KEY
 }
 
+// --------- reliableTracker: tracks unacked datagrams ---------
+type reliableTracker struct {
+	mu      sync.Mutex
+	unacked map[uint32][]byte    //seq -> datagram
+	sentAt  map[uint32]time.Time //seq -> sent time
+}
+
 func (p *pending) add(e event) {
 	if e.kind == protocol.TypeMove {
 		p.lastMove = &e
@@ -33,7 +41,7 @@ func (p *pending) add(e event) {
 }
 
 // flush: encode + send all package
-func (p *pending) flush(conn net.Conn, seq *uint32) {
+func (p *pending) flush(conn net.Conn, seq *uint32, rt *reliableTracker) {
 	movesCoalesced := 0
 	if p.lastMove != nil {
 		movesCoalesced = 1
@@ -43,9 +51,19 @@ func (p *pending) flush(conn net.Conn, seq *uint32) {
 	for _, e := range p.reliableQ {
 		switch e.kind {
 		case protocol.TypeClick:
-			conn.Write(protocol.EncodeClick(*seq, e.mask, e.down, 0))
+			data := protocol.EncodeClick(*seq, e.mask, e.down, 0)
+			conn.Write(data)
+			rt.mu.Lock()
+			rt.unacked[*seq] = data
+			rt.sentAt[*seq] = time.Now()
+			rt.mu.Unlock()
 		case protocol.TypeKey:
-			conn.Write(protocol.EncodeKey(*seq, e.key, e.down, 0))
+			data := protocol.EncodeKey(*seq, e.key, e.down, 0)
+			conn.Write(data)
+			rt.mu.Lock()
+			rt.unacked[*seq] = data
+			rt.sentAt[*seq] = time.Now()
+			rt.mu.Unlock()
 		}
 		*seq++
 	}
@@ -89,7 +107,7 @@ func doHandshake(conn net.Conn) (uint32, error) {
 }
 
 // ---------- goroutine read reply (STATUS/ACK/STATS) ----------
-func listenReplies(conn net.Conn) {
+func listenReplies(conn net.Conn, rt *reliableTracker) {
 	buf := make([]byte, 1024)
 	for {
 		n, err := conn.Read(buf)
@@ -103,10 +121,30 @@ func listenReplies(conn net.Conn) {
 		case protocol.TypeAck:
 			_, ackSeq := protocol.DecodeAck(buf)
 			fmt.Printf("[Controller] <- ACK seq=%d\n", ackSeq)
+			rt.mu.Lock()
+			delete(rt.unacked, ackSeq)
+			delete(rt.sentAt, ackSeq)
+			rt.mu.Unlock()
 		case protocol.TypeStats:
 			_, r, l, ro := protocol.DecodeStats(buf)
 			fmt.Printf("[Controller] <- STATS received=%d lost=%d reordered=%d\n", r, l, ro)
 		}
+	}
+}
+func (rt *reliableTracker) resendLoop(conn net.Conn) {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for range ticker.C {
+		rt.mu.Lock()
+		for seq, data := range rt.unacked {
+			if time.Since(rt.sentAt[seq]) > 100*time.Millisecond {
+				_, err := conn.Write(data)
+				if err != nil {
+					log.Println(err)
+				}
+			}
+		}
+		rt.mu.Unlock()
 	}
 }
 
@@ -124,14 +162,22 @@ func main() {
 	}
 	seq := startSeq
 
-	// 2) goroutine read replies
-	go listenReplies(conn)
+	// 2) goroutine read replies and resend unacked datagrams
+	rt := reliableTracker{
+		unacked: make(map[uint32][]byte),
+		sentAt:  make(map[uint32]time.Time),
+	}
+	go rt.resendLoop(conn)
+	go listenReplies(conn, &rt)
 
 	// 3) producer: send events
 	events := make(chan event, 100)
 	go func() {
-		for i := 0; i < 200; i++ {
+		for i := 0; i < 100; i++ {
 			events <- event{kind: protocol.TypeMove, x: uint16(i), y: uint16(i * 2)}
+			if i%3 == 0 {
+				events <- event{kind: protocol.TypeClick, mask: 1, down: 1}
+			}
 			if i%20 == 0 {
 				events <- event{kind: protocol.TypeKey, key: 'A', down: 1}
 			}
@@ -148,13 +194,13 @@ func main() {
 		select {
 		case e, ok := <-events:
 			if !ok {
-				p.flush(conn, &seq) // last flush after pipe closed
+				p.flush(conn, &seq, &rt) // last flush after pipe closed
 				log.Println("ส่งครบแล้ว")
 				return
 			}
 			p.add(e)
 		case <-ticker.C:
-			p.flush(conn, &seq)
+			p.flush(conn, &seq, &rt)
 		}
 	}
 }

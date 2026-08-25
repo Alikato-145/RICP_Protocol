@@ -55,11 +55,11 @@ func (st *viewerState) trackSeq(seq uint32) (isDrop bool) {
 	return false
 }
 
-func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, src *net.UDPAddr, st *viewerState) {
+func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, st *viewerState) {
 	type_message := buf[4]
 	if !st.authenticated && type_message != protocol.TypeHello {
 		fmt.Printf("[seq %-5d] DENIED   not authenticated -> 401\n", seq)
-		conn.WriteToUDP(protocol.EncodeStatus(0, 401), src)
+		conn.WriteToUDP(protocol.EncodeStatus(0, 401), st.clientAddr)
 		return
 	}
 	switch type_message {
@@ -69,9 +69,14 @@ func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, src *net.UDPAddr,
 	case protocol.TypeClick:
 		_, mask, down, _ := protocol.DecodeClick(buf)
 		fmt.Printf("[seq %-5d] CLICK    mask=%d down=%d\n", seq, mask, down)
+		//ACK after receiving action
+		conn.WriteToUDP(protocol.EncodeAck(0, seq), st.clientAddr)
+
 	case protocol.TypeKey:
 		_, key, down, _ := protocol.DecodeKey(buf)
 		fmt.Printf("[seq %-5d] KEY      key=%c down=%d\n", seq, rune(key), down)
+		//ACK after receiving action
+		conn.WriteToUDP(protocol.EncodeAck(0, seq), st.clientAddr)
 	case protocol.TypeScroll:
 		_, mask, x, y := protocol.DecodeScroll(buf)
 		fmt.Printf("[seq %-5d] SCROLL   dx=%d dy=%d mask=%d\n", seq, x, y, mask)
@@ -83,10 +88,10 @@ func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, src *net.UDPAddr,
 			st.authenticated = true
 			st.lastSeq = startSeq - 1
 			st.mu.Unlock()
-			conn.WriteToUDP(protocol.EncodeWelcome(0, startSeq), src)
+			conn.WriteToUDP(protocol.EncodeWelcome(0, startSeq), st.clientAddr)
 			fmt.Printf("[seq %-5d] HELLO    token=%q -> WELCOME start-seq=%d\n", seq, token, startSeq)
 		} else {
-			conn.WriteToUDP(protocol.EncodeStatus(0, 401), src)
+			conn.WriteToUDP(protocol.EncodeStatus(0, 401), st.clientAddr)
 			fmt.Printf("[seq %-5d] HELLO    token=%q -> 401 UNAUTHORIZED\n", seq, token)
 		}
 		return // handshake ไม่นับเป็น input
@@ -97,7 +102,7 @@ func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, src *net.UDPAddr,
 		fmt.Printf("[seq %-5d] STATUS   %d %s\n", seq, code, phrase)
 	default:
 		fmt.Printf("[seq %-5d] UNKNOWN  type=0x%02X -> 400\n", seq, type_message)
-		conn.WriteToUDP(protocol.EncodeStatus(0, 400), src)
+		conn.WriteToUDP(protocol.EncodeStatus(0, 400), st.clientAddr)
 		return
 	}
 	st.mu.Lock()
@@ -149,9 +154,17 @@ func main() {
 			continue
 		}
 		seq := binary.BigEndian.Uint32(buf[:4])
+		msgType := buf[4]
+		st.mu.Lock()
+		isOld := !st.first && seq <= st.lastSeq
+		st.mu.Unlock()
+		if isOld && (msgType == protocol.TypeClick || msgType == protocol.TypeKey) {
+			conn.WriteToUDP(protocol.EncodeAck(0, seq), src)
+			continue
+		}
 		if st.trackSeq(seq) {
 			continue
 		}
-		handleDatagram(conn, buf[:n], seq, src, &st)
+		handleDatagram(conn, buf[:n], seq, &st)
 	}
 }
