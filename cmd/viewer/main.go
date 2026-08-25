@@ -31,13 +31,13 @@ func setupUDP() (*net.UDPConn, error) {
 
 func (st *viewerState) trackSeq(seq uint32) (isDrop bool) {
 	if !st.first && seq > st.lastSeq+1 {
-		fmt.Printf("gap detected: lastSeq=%d, seq=%d\n", st.lastSeq, seq)
-		st.lost += seq - st.lastSeq - 1
-
+		missing := seq - st.lastSeq - 1
+		st.lost += missing
+		fmt.Printf("  !! GAP      lost %d packet (expected %d, got %d)\n", missing, st.lastSeq+1, seq)
 	}
 	if !st.first && seq <= st.lastSeq {
-		fmt.Printf("reorder/dup: seq=%d\n", seq)
 		st.reordered++
+		fmt.Printf("  !! REORDER  dropped late/dup seq=%d\n", seq)
 		return true
 	}
 	st.lastSeq = seq
@@ -45,59 +45,51 @@ func (st *viewerState) trackSeq(seq uint32) (isDrop bool) {
 	return false
 }
 
-func handleDatagram(conn *net.UDPConn, buf []byte, n int, src *net.UDPAddr, st *viewerState) {
+func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, src *net.UDPAddr, st *viewerState) {
 	type_message := buf[4]
 	if !st.authenticated && type_message != protocol.TypeHello {
-		fmt.Println("not authenticated")
+		fmt.Printf("[seq %-5d] DENIED   not authenticated -> 401\n", seq)
 		conn.WriteToUDP(protocol.EncodeStatus(0, 401), src)
 		return
 	}
 	switch type_message {
 	case protocol.TypeMove:
 		_, mask, x, y := protocol.DecodeMove(buf)
-		fmt.Printf("move: mask=%d, x=%d, y=%d\n", mask, x, y)
+		fmt.Printf("[seq %-5d] MOVE     x=%-4d y=%-4d mask=%d\n", seq, x, y, mask)
 	case protocol.TypeClick:
-		_, mask, down_flag, reserved := protocol.DecodeClick(buf)
-		fmt.Printf("click: mask=%d, down=%d, reserved=%d\n", mask, down_flag, reserved)
+		_, mask, down, _ := protocol.DecodeClick(buf)
+		fmt.Printf("[seq %-5d] CLICK    mask=%d down=%d\n", seq, mask, down)
 	case protocol.TypeKey:
-		_, key, down_flag, reserved := protocol.DecodeKey(buf)
-		fmt.Printf("key: key=%d, down=%d, reserved=%d\n", key, down_flag, reserved)
+		_, key, down, _ := protocol.DecodeKey(buf)
+		fmt.Printf("[seq %-5d] KEY      key=%c down=%d\n", seq, rune(key), down)
 	case protocol.TypeScroll:
 		_, mask, x, y := protocol.DecodeScroll(buf)
-		fmt.Printf("scroll: mask=%d, x=%d, y=%d\n", mask, x, y)
+		fmt.Printf("[seq %-5d] SCROLL   dx=%d dy=%d mask=%d\n", seq, x, y, mask)
 	case protocol.TypeHello:
 		_, token := protocol.DecodeHello(buf)
-		fmt.Printf("hello: token=%s\n", token)
 		if token == "token123" {
 			startSeq := uint32(1500)
 			st.authenticated = true
 			st.lastSeq = startSeq - 1
 			conn.WriteToUDP(protocol.EncodeWelcome(0, startSeq), src)
-			log.Printf("[Viewer] -> WELCOME start-seq=%d", startSeq)
+			fmt.Printf("[seq %-5d] HELLO    token=%q -> WELCOME start-seq=%d\n", seq, token, startSeq)
 		} else {
 			conn.WriteToUDP(protocol.EncodeStatus(0, 401), src)
+			fmt.Printf("[seq %-5d] HELLO    token=%q -> 401 UNAUTHORIZED\n", seq, token)
 		}
-	case protocol.TypeWelcome:
-		_, start := protocol.DecodeWelcome(buf)
-		fmt.Printf("welcome: start=%d\n", start)
-	case protocol.TypeAck:
-		_, ack_seq := protocol.DecodeAck(buf)
-		fmt.Printf("ack: seq=%d\n", ack_seq)
-	case protocol.TypeStats:
-		_, r, l, ro := protocol.DecodeStats(buf)
-		fmt.Printf("stats: received=%d, lost=%d, reordered=%d\n", r, l, ro)
+		return // handshake ไม่นับเป็น input
 	case protocol.TypeBye:
-		s := protocol.DecodeBye(buf)
-		fmt.Printf("bye: %d\n", s)
+		fmt.Printf("[seq %-5d] BYE      session closed\n", seq)
 	case protocol.TypeStatus:
 		_, code, phrase := protocol.DecodeStatus(buf)
-		fmt.Printf("status: code=%d, phrase=%s\n", code, phrase)
+		fmt.Printf("[seq %-5d] STATUS   %d %s\n", seq, code, phrase)
 	default:
-		fmt.Printf("unknown type: %d\n", type_message)
+		fmt.Printf("[seq %-5d] UNKNOWN  type=0x%02X -> 400\n", seq, type_message)
 		conn.WriteToUDP(protocol.EncodeStatus(0, 400), src)
+		return
 	}
 	st.received++
-	fmt.Printf("total: received=%d, lost=%d, reordered=%d\n", st.received, st.lost, st.reordered)
+	fmt.Printf("            stats: recv=%d lost=%d reorder=%d\n", st.received, st.lost, st.reordered)
 }
 
 func main() {
@@ -107,7 +99,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer conn.Close()
-	fmt.Println("Viewr listening UDP at port : 9200")
+	fmt.Println("=== RICP Viewer listening on UDP :9200 ===")
 	buf := make([]byte, 1024)
 	for {
 		n, src, err := conn.ReadFromUDP(buf)
@@ -116,6 +108,7 @@ func main() {
 			continue
 		}
 		if n < 5 {
+			fmt.Printf("  !! BAD       datagram too short (%d bytes) -> 400\n", n)
 			conn.WriteToUDP(protocol.EncodeStatus(0, 400), src)
 			continue
 		}
@@ -123,8 +116,6 @@ func main() {
 		if st.trackSeq(seq) {
 			continue
 		}
-		fmt.Printf("seq: %d ", seq)
-		handleDatagram(conn, buf[:n], n, src, &st)
+		handleDatagram(conn, buf[:n], seq, src, &st)
 	}
-
 }
