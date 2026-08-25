@@ -67,8 +67,8 @@ func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, st *viewerState) 
 		_, mask, x, y := protocol.DecodeMove(buf)
 		fmt.Printf("[seq %-5d] MOVE     x=%-4d y=%-4d mask=%d\n", seq, x, y, mask)
 	case protocol.TypeClick:
-		_, mask, down, _ := protocol.DecodeClick(buf)
-		fmt.Printf("[seq %-5d] CLICK    mask=%d down=%d\n", seq, mask, down)
+		_, mask, down, _, x, y := protocol.DecodeClick(buf)
+		fmt.Printf("[seq %-5d] CLICK    mask=%d down=%d x=%d y=%d\n", seq, mask, down, x, y)
 		//ACK after receiving action
 		conn.WriteToUDP(protocol.EncodeAck(0, seq), st.clientAddr)
 
@@ -97,6 +97,12 @@ func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, st *viewerState) 
 		return // handshake ไม่นับเป็น input
 	case protocol.TypeBye:
 		fmt.Printf("[seq %-5d] BYE      session closed\n", seq)
+		st.mu.Lock()
+		st.authenticated = false
+		st.first = true
+		st.received, st.lost, st.reordered = 0, 0, 0
+		st.mu.Unlock()
+		return
 	case protocol.TypeStatus:
 		_, code, phrase := protocol.DecodeStatus(buf)
 		fmt.Printf("[seq %-5d] STATUS   %d %s\n", seq, code, phrase)
@@ -107,8 +113,9 @@ func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, st *viewerState) 
 	}
 	st.mu.Lock()
 	st.received++
+	r, l, ro := st.received, st.lost, st.reordered
 	st.mu.Unlock()
-	fmt.Printf("            stats: recv=%d lost=%d reorder=%d\n", st.received, st.lost, st.reordered)
+	fmt.Printf("            stats: recv=%d lost=%d reorder=%d\n", r, l, ro)
 }
 func (st *viewerState) reportStats(conn *net.UDPConn) {
 	ticker := time.NewTicker(1 * time.Second)
@@ -117,8 +124,9 @@ func (st *viewerState) reportStats(conn *net.UDPConn) {
 		st.mu.Lock()
 		r, l, ro := st.received, st.lost, st.reordered
 		addr := st.clientAddr
+		auth := st.authenticated
 		st.mu.Unlock()
-		if addr != nil {
+		if addr != nil && auth {
 			conn.WriteToUDP(protocol.EncodeStats(0, r, l, ro), addr)
 			fmt.Printf(">> STATS sent: recv=%d lost=%d reorder=%d\n", r, l, ro)
 		}
@@ -158,6 +166,10 @@ func main() {
 		st.mu.Lock()
 		isOld := !st.first && seq <= st.lastSeq
 		st.mu.Unlock()
+		if msgType == protocol.TypeHello {
+			handleDatagram(conn, buf[:n], seq, &st)
+			continue
+		}
 		if isOld && (msgType == protocol.TypeClick || msgType == protocol.TypeKey) {
 			conn.WriteToUDP(protocol.EncodeAck(0, seq), src)
 			continue

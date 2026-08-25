@@ -51,7 +51,7 @@ func (p *pending) flush(conn net.Conn, seq *uint32, rt *reliableTracker) {
 	for _, e := range p.reliableQ {
 		switch e.kind {
 		case protocol.TypeClick:
-			data := protocol.EncodeClick(*seq, e.mask, e.down, 0)
+			data := protocol.EncodeClick(*seq, e.mask, e.down, 0, e.x, e.y)
 			conn.Write(data)
 			rt.mu.Lock()
 			rt.unacked[*seq] = data
@@ -176,7 +176,7 @@ func main() {
 		for i := 0; i < 100; i++ {
 			events <- event{kind: protocol.TypeMove, x: uint16(i), y: uint16(i * 2)}
 			if i%3 == 0 {
-				events <- event{kind: protocol.TypeClick, mask: 1, down: 1}
+				events <- event{kind: protocol.TypeClick, mask: 1, down: 1, x: uint16(i), y: uint16(i * 2)}
 			}
 			if i%20 == 0 {
 				events <- event{kind: protocol.TypeKey, key: 'A', down: 1}
@@ -195,6 +195,9 @@ func main() {
 		case e, ok := <-events:
 			if !ok {
 				p.flush(conn, &seq, &rt) // last flush after pipe closed
+				conn.Write(protocol.EncodeBye(seq))
+				log.Printf("[Controller] -> BYE seq=%d", seq)
+				time.Sleep(100 * time.Millisecond) // ให้ BYE ถึง viewer ก่อนปิด
 				log.Println("ส่งครบแล้ว")
 				return
 			}

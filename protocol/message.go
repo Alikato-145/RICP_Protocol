@@ -7,7 +7,7 @@ import (
 func EncodeMove(seq uint32, mask uint8, x, y uint16) []byte {
 	buf := make([]byte, 10)
 	binary.BigEndian.PutUint32(buf[0:4], seq)
-	buf[4] = TypeMove 
+	buf[4] = TypeMove
 	binary.BigEndian.PutUint16(buf[5:7], x)
 	binary.BigEndian.PutUint16(buf[7:9], y)
 	buf[9] = mask
@@ -22,22 +22,26 @@ func DecodeMove(buf []byte) (seq uint32, mask uint8, x, y uint16) {
 	return seq, mask, x, y
 }
 
-func EncodeClick(seq uint32, mask uint8, down_flag uint8, reserved uint8) []byte {
-	buf := make([]byte, 8)
+func EncodeClick(seq uint32, mask uint8, down_flag uint8, reserved uint8, x, y uint16) []byte {
+	buf := make([]byte, 12)
 	binary.BigEndian.PutUint32(buf[0:4], seq)
 	buf[4] = TypeClick
 	buf[5] = mask
 	buf[6] = down_flag
 	buf[7] = reserved
+	binary.BigEndian.PutUint16(buf[8:10], x)
+	binary.BigEndian.PutUint16(buf[10:12], y)
 	return buf
 }
 
-func DecodeClick(buf []byte) (seq uint32, mask uint8, down_flag uint8, reserved uint8) {
+func DecodeClick(buf []byte) (seq uint32, mask uint8, down_flag uint8, reserved uint8, x, y uint16) {
 	seq = binary.BigEndian.Uint32(buf[0:4])
 	mask = buf[5]
 	down_flag = buf[6]
 	reserved = buf[7]
-	return seq, mask, down_flag, reserved
+	x = binary.BigEndian.Uint16(buf[8:10])
+	y = binary.BigEndian.Uint16(buf[10:12])
+	return seq, mask, down_flag, reserved, x, y
 }
 
 // keySystem follow X11 RFC 6143

@@ -135,7 +135,7 @@ byte แรก (type) ก็รู้ทันทีว่า datagram นี้
 | type | ชื่อ | ทิศทาง | ขนาดรวม | payload |
 |---|---|---|---|---|
 | 0x01 | MOVE | C→V | 10 B | x (U16), y (U16), button-mask (U8) |
-| 0x02 | CLICK | C→V | 8 B | button-mask (U8), down-flag (U8), reserved (U8) |
+| 0x02 | CLICK | C→V | 12 B | button-mask (U8), down-flag (U8), reserved (U8), x (U16), y (U16) |
 | 0x03 | KEY | C→V | 11 B | down-flag (U8), reserved (U8), keysym (U32) |
 | 0x04 | SCROLL | C→V | 8 B | delta-x (S8), delta-y (S8), reserved (U8) |
 | 0x10 | HELLO | C→V | 5 B + token | เจรจาเริ่ม session |

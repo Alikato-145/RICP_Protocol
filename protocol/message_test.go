@@ -14,14 +14,14 @@ func TestMoveRoundtrip(t *testing.T) {
 	}
 }
 func TestClickRoundtrip(t *testing.T) {
-	pkt := EncodeClick(1299, 1, 1, 0)
-	if len(pkt) != 8 {
-		t.Fatalf("CLICK should be 8 bytes, got %d", len(pkt))
+	pkt := EncodeClick(1299, 1, 1, 0, 300, 250)
+	if len(pkt) != 12 {
+		t.Fatalf("CLICK should be 12 bytes, got %d", len(pkt))
 	}
 
-	seq, mask, down_flag, reserved := DecodeClick(pkt)
-	if seq != 1299 || mask != 1 || down_flag != 1 || reserved != 0 || pkt[4] != TypeClick {
-		t.Fatalf("decode mismatch: seq=%d mask=%d down_flag=%d reserved=%d type=%d", seq, mask, down_flag, reserved, pkt[4])
+	seq, mask, down_flag, reserved, x, y := DecodeClick(pkt)
+	if seq != 1299 || mask != 1 || down_flag != 1 || reserved != 0 || x != 300 || y != 250 || pkt[4] != TypeClick {
+		t.Fatalf("decode mismatch: seq=%d mask=%d down_flag=%d reserved=%d x=%d y=%d type=%d", seq, mask, down_flag, reserved, x, y, pkt[4])
 	}
 }
 
