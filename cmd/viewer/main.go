@@ -69,13 +69,13 @@ func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, st *viewerState) 
 	case protocol.TypeClick:
 		_, mask, down, _, x, y := protocol.DecodeClick(buf)
 		fmt.Printf("[seq %-5d] CLICK    mask=%d down=%d x=%d y=%d\n", seq, mask, down, x, y)
-		//ACK after receiving action
+		// ACK (0x12) carries ack-seq for reliable path (fulfills logical status 202 DELIVERED)
 		conn.WriteToUDP(protocol.EncodeAck(0, seq), st.clientAddr)
 
 	case protocol.TypeKey:
 		_, key, down, _ := protocol.DecodeKey(buf)
 		fmt.Printf("[seq %-5d] KEY      key=%c down=%d\n", seq, rune(key), down)
-		//ACK after receiving action
+		// ACK (0x12) carries ack-seq for reliable path (fulfills logical status 202 DELIVERED)
 		conn.WriteToUDP(protocol.EncodeAck(0, seq), st.clientAddr)
 	case protocol.TypeScroll:
 		_, mask, x, y := protocol.DecodeScroll(buf)
@@ -89,14 +89,17 @@ func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, st *viewerState) 
 			st.lastSeq = startSeq - 1
 			st.mu.Unlock()
 			conn.WriteToUDP(protocol.EncodeWelcome(0, startSeq), st.clientAddr)
-			fmt.Printf("[seq %-5d] HELLO    token=%q -> WELCOME start-seq=%d\n", seq, token, startSeq)
+			conn.WriteToUDP(protocol.EncodeStatus(0, 200), st.clientAddr) // 200 OK: handshake 
+			conn.WriteToUDP(protocol.EncodeStatus(0, 100), st.clientAddr) // 100 STREAMING
+			fmt.Printf("[seq %-5d] HELLO    token=%q -> WELCOME start-seq=%d + 200 + 100\n", seq, token, startSeq)
 		} else {
 			conn.WriteToUDP(protocol.EncodeStatus(0, 401), st.clientAddr)
 			fmt.Printf("[seq %-5d] HELLO    token=%q -> 401 UNAUTHORIZED\n", seq, token)
 		}
-		return // handshake ไม่นับเป็น input
+		return // handshake
 	case protocol.TypeBye:
-		fmt.Printf("[seq %-5d] BYE      session closed\n", seq)
+		fmt.Printf("[seq %-5d] BYE      session closed -> 210\n", seq)
+		conn.WriteToUDP(protocol.EncodeStatus(0, 210), st.clientAddr)
 		st.mu.Lock()
 		st.authenticated = false
 		st.first = true
@@ -118,7 +121,7 @@ func handleDatagram(conn *net.UDPConn, buf []byte, seq uint32, st *viewerState) 
 	fmt.Printf("            stats: recv=%d lost=%d reorder=%d\n", r, l, ro)
 }
 func (st *viewerState) reportStats(conn *net.UDPConn) {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
 		st.mu.Lock()
@@ -159,6 +162,11 @@ func main() {
 		if n < 5 {
 			fmt.Printf("  !! BAD       datagram too short (%d bytes) -> 400\n", n)
 			conn.WriteToUDP(protocol.EncodeStatus(0, 400), src)
+			continue
+		}
+		if n > 512 {
+			fmt.Printf("  !! TOOBIG    datagram too large (%d bytes) -> 413\n", n)
+			conn.WriteToUDP(protocol.EncodeStatus(0, 413), src)
 			continue
 		}
 		seq := binary.BigEndian.Uint32(buf[:4])
